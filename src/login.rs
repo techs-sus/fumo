@@ -1,4 +1,5 @@
 use crate::project::Secrets;
+use anyhow::Context;
 use directories::ProjectDirs;
 use headless_chrome::{
 	browser::default_executable, protocol::cdp::Target::CreateTarget, Browser, LaunchOptionsBuilder,
@@ -28,12 +29,12 @@ pub async fn save_session_secrets(session: String) -> anyhow::Result<()> {
 	Ok(())
 }
 
-pub async fn get_session_secrets() -> Secrets {
+pub async fn get_session_secrets() -> anyhow::Result<Secrets> {
 	let bytes = tokio::fs::read(get_config_directory().join("secrets.json"))
 		.await
-		.expect("failed reading secrets");
+		.context("failed reading secrets")?;
 
-	serde_json::from_slice::<Secrets>(&bytes).expect("failed deserializing secrets")
+	serde_json::from_slice::<Secrets>(&bytes).context("failed deserializing secrets")
 }
 
 /// Returns a session cookie.
