@@ -195,14 +195,12 @@ pub async fn push_project() -> anyhow::Result<()> {
 					.to_string_lossy()
 					== "luau"
 			{
-				let name = module
-					.file_name()
-					.into_string()
-					.expect("failed converting file name to unicode characters");
+				let path_without_extension = PathBuf::from(module.file_name()).with_extension("");
+				let name = path_without_extension.to_string_lossy();
 				let source = tokio::fs::read_to_string(module.path())
 					.await
 					.with_context(|| format!("failed reading module: {}", module.path().display()))?;
-				modules.push((name, source));
+				modules.push((name.to_string(), source));
 			}
 		} else {
 			println!("failed getting file type for {}", module.path().display());

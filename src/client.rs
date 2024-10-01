@@ -245,6 +245,7 @@ impl Client {
 				EditorUpdate::Publicity(public) => request_body.script_info.is_public = Some(*public),
 			}
 		}
+
 		self
 			.client
 			.put(format!("{BASE_URL}/api/script/editor"))
@@ -256,8 +257,6 @@ impl Client {
 			.header("Content-Type", "application/json")
 			.body(serde_json::to_string(&request_body)?)
 			.send()
-			.await?
-			.bytes()
 			.await?;
 		Ok(())
 	}
