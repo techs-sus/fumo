@@ -206,10 +206,7 @@ pub async fn push_project() -> anyhow::Result<()> {
 
 	// use .iter() to force items to have a lifetime bounded by the function
 	for (name, source) in modules.iter() {
-		actions.push(EditorUpdate::Module {
-			name: &name,
-			source: &source,
-		});
+		actions.push(EditorUpdate::Module { name, source });
 	}
 
 	let client = Client::new(get_session_secrets().await?);
