@@ -5,17 +5,16 @@ mod project;
 use clap::{Parser, Subcommand};
 use client::Client;
 use login::{get_config_directory, get_session_secrets, save_session_secrets, use_browser_token};
-use project::{init, pull_project, push_project};
+use project::{init, pull_project, push_project, read_configuration};
 use std::path::PathBuf;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum Command {
-	// TODO: Add create script command, key gen
 	/// Logs into fumosclub.
 	Login,
 	/// Initializes a project in the directory.
 	Init { project_directory: PathBuf },
-	/// Lists all projects under this fumosclub account.
+	/// Lists all projects under the logged in fumosclub account.
 	List,
 	/// Pulls down a script from fumosclub (the script must be editable).
 	Pull {
@@ -24,6 +23,11 @@ pub enum Command {
 	},
 	/// Push the script in current directory to fumosclub using the fumosync.json file.
 	Push,
+	/// Generates a key for a script under the logged in fumosclub account.
+	Generate {
+		#[arg(long)]
+		id: Option<String>,
+	},
 }
 
 /// Fumosync allows you to push and pull local projects to fumosclub.
@@ -97,5 +101,29 @@ async fn main() {
 		Command::Push => push_project()
 			.await
 			.expect("failed pushing project to fumosclub"),
+		Command::Generate { id } => {
+			let client = Client::new(
+				get_session_secrets()
+					.await
+					.expect("failed getting session secrets"),
+			);
+			let id = match id {
+				Some(id) => id,
+				None => {
+					read_configuration()
+						.await
+						.expect("failed reading configuration")
+						.script_id
+				}
+			};
+
+			println!(
+				"{}",
+				client
+					.generate_key(&id)
+					.await
+					.expect("failed generating key")
+			);
+		}
 	}
 }

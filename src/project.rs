@@ -22,7 +22,7 @@ pub struct Secrets {
 	pub session: String,
 }
 
-async fn create_file(path: PathBuf, contents: &str) -> anyhow::Result<()> {
+async fn write_file(path: PathBuf, contents: &str) -> anyhow::Result<()> {
 	tokio::fs::write(path.as_path(), contents)
 		.await
 		.context(format!("failed creating file: {}", path.display()))
@@ -32,6 +32,15 @@ async fn create_directory(path: PathBuf) -> anyhow::Result<()> {
 	tokio::fs::create_dir(path.as_path())
 		.await
 		.context(format!("failed creating directory: {}", path.display()))
+}
+
+pub async fn read_configuration() -> anyhow::Result<Configuration> {
+	serde_json::from_str(
+		&tokio::fs::read_to_string("fumosync.json")
+			.await
+			.context("failed reading fumosync.json")?,
+	)
+	.context("failed deserializing fumosync.json")
 }
 
 /// Initializes a project for syncing within fumosclub.
@@ -44,7 +53,7 @@ pub async fn init(directory: PathBuf) -> anyhow::Result<()> {
 	create_directory(directory.join("pkg")).await?;
 	create_directory(directory.join(".vscode")).await?;
 
-	create_file(
+	write_file(
 		directory.join(".vscode").join("settings.json"),
 		r#"{
 	"luau-lsp.types.robloxSecurityLevel": "None",
@@ -53,15 +62,15 @@ pub async fn init(directory: PathBuf) -> anyhow::Result<()> {
 	)
 	.await?;
 
-	create_file(
+	write_file(
 		directory.join("init.server.luau"),
 		r#"-- you can require packages with requireM("path") where path is a file inside of pkg (no extension)"#,
 	)
 	.await?;
 
-	create_file(directory.join("README.md"), r#"# stuff here"#).await?;
+	write_file(directory.join("README.md"), r#"# stuff here"#).await?;
 
-	create_file(
+	write_file(
 		directory.join("types.d.luau"),
 		r#"declare loadstringEnabled: boolean
 declare owner: Player
@@ -86,7 +95,7 @@ declare LoadAssets: (assetId: number) -> {
 	)
 	.await?;
 
-	create_file(
+	write_file(
 		directory.join("fumosync.json"),
 		&serde_json::to_string_pretty(&Configuration {
 			script_name: directory
@@ -116,19 +125,19 @@ pub async fn pull_project(script_id: String, project_directory: PathBuf) -> anyh
 
 	let script_info = client.get_editor(&script_id).await?.script_info;
 
-	create_file(
+	write_file(
 		project_directory.join("README.md"),
 		&script_info.description,
 	)
 	.await?;
 
-	create_file(
+	write_file(
 		project_directory.join("init.server.luau"),
 		&script_info.source.main,
 	)
 	.await?;
 
-	create_file(
+	write_file(
 		project_directory.join("fumosync.json"),
 		&serde_json::to_string_pretty(&Configuration {
 			script_name: script_info.name,
@@ -140,7 +149,7 @@ pub async fn pull_project(script_id: String, project_directory: PathBuf) -> anyh
 	.await?;
 
 	for (name, source) in script_info.source.modules {
-		create_file(
+		write_file(
 			project_directory.join("pkg").join(format!("{name}.luau")),
 			&source,
 		)
@@ -151,11 +160,7 @@ pub async fn pull_project(script_id: String, project_directory: PathBuf) -> anyh
 }
 
 pub async fn push_project() -> anyhow::Result<()> {
-	let configuration: Configuration = serde_json::from_slice(
-		&tokio::fs::read("fumosync.json")
-			.await
-			.context("failed finding fumosync.json in the current directory")?,
-	)?;
+	let configuration = read_configuration().await?;
 	let whitelist = configuration.whitelist.iter().map(|x| x.as_str()).collect();
 
 	let description = &tokio::fs::read_to_string("README.md")

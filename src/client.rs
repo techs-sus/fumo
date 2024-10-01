@@ -1,5 +1,6 @@
 use crate::project::Secrets;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_repr::Deserialize_repr;
 use std::collections::HashMap;
 const USER_AGENT: &str = "fumosync-rs (github.com/techs-sus/fumosync)";
@@ -111,6 +112,36 @@ impl Client {
 		)?)
 	}
 
+	pub async fn generate_key(&self, id: &str) -> anyhow::Result<String> {
+		#[derive(Deserialize)]
+		struct Key {
+			success: bool,
+			require: String,
+		}
+
+		let value: Key = serde_json::from_slice(
+			&self
+				.client
+				.post(format!("{BASE_URL}/api/script/generatekey"))
+				.header(
+					"Cookie",
+					format!("session={}", self.secrets.session.clone()),
+				)
+				.header("User-Agent", USER_AGENT)
+				.header("Content-Type", "application/json")
+				.body(serde_json::to_string(&json!({
+					"scriptId": id
+				}))?)
+				.send()
+				.await?
+				.bytes()
+				.await?,
+		)?;
+
+		Ok(value.require)
+	}
+
+	/// Lists all scripts this account can access.
 	pub async fn list_scripts(&self) -> anyhow::Result<ScriptList> {
 		Ok(serde_json::from_slice(
 			&self
