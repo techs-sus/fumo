@@ -1,10 +1,14 @@
 use crate::{
 	client::{Client, EditorUpdate},
+	error::Error,
 	login::get_session_secrets,
 };
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::{ffi::OsStr, path::PathBuf};
+use tracing::info;
+use std::{
+	ffi::OsStr,
+	path::{Path, PathBuf},
+};
 
 /// fumosync.json
 #[derive(Deserialize, Serialize)]
@@ -16,37 +20,31 @@ pub struct Configuration {
 	pub is_public: bool,
 }
 
-/// secrets.json
-#[derive(Deserialize, Serialize)]
-pub struct Secrets {
-	pub session: String,
+pub async fn write_file<T: AsRef<Path>>(path: T, contents: &str) -> Result<(), Error> {
+	match tokio::fs::write(path.as_ref(), contents).await {
+		Ok(value) => Ok(value),
+		Err(io_error) => Err(Error::CreateFile(path.as_ref().to_path_buf(), io_error)),
+	}
 }
 
-async fn write_file(path: PathBuf, contents: &str) -> anyhow::Result<()> {
-	tokio::fs::write(path.as_path(), contents)
-		.await
-		.context(format!("failed creating file: {}", path.display()))
+async fn create_directory<T: AsRef<Path>>(path: T) -> Result<(), Error> {
+	match tokio::fs::create_dir(path.as_ref()).await {
+		Ok(value) => Ok(value),
+		Err(io_error) => Err(Error::CreateDirectory(
+			path.as_ref().to_path_buf(),
+			io_error,
+		)),
+	}
 }
 
-async fn create_directory(path: PathBuf) -> anyhow::Result<()> {
-	tokio::fs::create_dir(path.as_path())
-		.await
-		.context(format!("failed creating directory: {}", path.display()))
-}
-
-pub async fn read_configuration() -> anyhow::Result<Configuration> {
-	serde_json::from_str(
-		&tokio::fs::read_to_string("fumosync.json")
-			.await
-			.context("failed reading fumosync.json")?,
-	)
-	.context("failed deserializing fumosync.json")
+pub async fn read_configuration() -> Result<Configuration, Error> {
+	Ok(serde_json::from_str(&read_file("fumosync.json").await?)?)
 }
 
 /// Initializes a project for syncing within fumosclub.
-pub async fn init(directory: PathBuf) -> anyhow::Result<()> {
+pub async fn init(directory: PathBuf) -> Result<(), Error> {
 	if directory.exists() {
-		return Err(anyhow::anyhow!("the directory already exists"));
+		return Err(Error::DirectoryAlreadyExists(directory));
 	}
 
 	create_directory(directory.clone()).await?;
@@ -106,8 +104,7 @@ declare LoadAssets: (assetId: number) -> {
 			script_id: "???".to_owned(),
 			whitelist: Vec::new(),
 			is_public: false,
-		})
-		.context("failed serializing example fumosync.json")?,
+		})?,
 	)
 	.await?;
 
@@ -115,13 +112,14 @@ declare LoadAssets: (assetId: number) -> {
 }
 
 /// Pulls a project from fumosclub and links it via fumosync.json.
-pub async fn pull_project(script_id: String, project_directory: PathBuf) -> anyhow::Result<()> {
+pub async fn pull_project(script_id: String, project_directory: PathBuf) -> Result<(), Error> {
 	let client = Client::new(get_session_secrets().await?);
 
 	// setup initial file structure for hydration
-	init(project_directory.clone())
-		.await
-		.context("failed initing project")?;
+	match init(project_directory.clone()).await {
+		Ok(_) => {}
+		Err(e) => return Err(Error::ProjectDidntInitialize(Box::new(e))),
+	};
 
 	let script_info = client.get_editor(&script_id).await?.script_info;
 
@@ -159,17 +157,19 @@ pub async fn pull_project(script_id: String, project_directory: PathBuf) -> anyh
 	Ok(())
 }
 
-pub async fn push_project() -> anyhow::Result<()> {
+pub async fn read_file<T: AsRef<Path>>(path: T) -> Result<String, Error> {
+	match tokio::fs::read_to_string(path.as_ref()).await {
+		Ok(value) => Ok(value),
+		Err(io_error) => Err(Error::ReadFile(path.as_ref().to_path_buf(), io_error)),
+	}
+}
+
+pub async fn push_project() -> Result<(), Error> {
 	let configuration = read_configuration().await?;
 	let whitelist = configuration.whitelist.iter().map(|x| x.as_str()).collect();
 
-	let description = &tokio::fs::read_to_string("README.md")
-		.await
-		.context("failed reading description (README.md)")?;
-
-	let main_source = &tokio::fs::read_to_string("init.server.luau")
-		.await
-		.context("failed reading main source (init.server.luau)")?;
+	let description = &read_file("README.md").await?;
+	let main_source = &read_file("init.server.luau").await?;
 
 	let mut actions: Vec<EditorUpdate> = Vec::from([
 		EditorUpdate::Name(&configuration.script_name),
@@ -181,9 +181,11 @@ pub async fn push_project() -> anyhow::Result<()> {
 
 	let mut modules: Vec<(String, String)> = Vec::new();
 
-	let mut stream = tokio::fs::read_dir("pkg")
-		.await
-		.context("failed reading pkg (modules)")?;
+	let pkg_path = PathBuf::from("pkg");
+	let mut stream = match tokio::fs::read_dir(&pkg_path).await {
+		Ok(value) => value,
+		Err(io_error) => return Err(Error::ReadDirectory(pkg_path, io_error)),
+	};
 
 	while let Some(module) = stream.next_entry().await? {
 		if let Ok(file_type) = module.file_type().await {
@@ -197,13 +199,11 @@ pub async fn push_project() -> anyhow::Result<()> {
 			{
 				let path_without_extension = PathBuf::from(module.file_name()).with_extension("");
 				let name = path_without_extension.to_string_lossy();
-				let source = tokio::fs::read_to_string(module.path())
-					.await
-					.with_context(|| format!("failed reading module: {}", module.path().display()))?;
+				let source: String = read_file(module.path()).await?;
 				modules.push((name.to_string(), source));
 			}
 		} else {
-			println!("failed getting file type for {}", module.path().display());
+			info!("failed getting file type for {}", module.path().display());
 		}
 	}
 

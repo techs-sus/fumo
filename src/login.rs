@@ -1,10 +1,16 @@
-use crate::project::Secrets;
-use anyhow::Context;
+use crate::{
+	error::Error,
+	project::{read_file, write_file},
+};
+use chrono::serde::ts_seconds;
+use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
+use headless_chrome::protocol::cdp::Network::Cookie;
 use headless_chrome::{
 	browser::default_executable, protocol::cdp::Target::CreateTarget, Browser, LaunchOptionsBuilder,
 };
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::{ffi::OsStr, path::PathBuf};
 
 pub fn get_config_directory() -> PathBuf {
 	ProjectDirs::from("com", "techs-sus", "fumosync")
@@ -13,32 +19,33 @@ pub fn get_config_directory() -> PathBuf {
 		.to_path_buf()
 }
 
-pub async fn save_session_secrets(session: String) -> anyhow::Result<()> {
-	let bytes = tokio::fs::read(get_config_directory().join("secrets.json"))
-		.await
-		.expect("failed reading secrets");
-
-	let mut secrets = serde_json::from_slice::<Secrets>(&bytes)?;
-	secrets.session = session;
-
-	tokio::fs::write(
-		get_config_directory().join("secrets.json"),
-		serde_json::to_string_pretty(&secrets)?,
-	)
-	.await?;
-	Ok(())
+/// secrets.json
+#[derive(Deserialize, Serialize)]
+pub struct Secrets {
+	pub session: String,
+	#[serde(with = "ts_seconds")]
+	pub expires: DateTime<Utc>,
 }
 
-pub async fn get_session_secrets() -> anyhow::Result<Secrets> {
-	let bytes = tokio::fs::read(get_config_directory().join("secrets.json"))
-		.await
-		.context("failed reading secrets")?;
+pub async fn save_session_secrets(secrets: Secrets) -> Result<(), Error> {
+	write_file(
+		get_config_directory().join("secrets.json"),
+		&serde_json::to_string_pretty(&secrets)?,
+	)
+	.await
+}
 
-	serde_json::from_slice::<Secrets>(&bytes).context("failed deserializing secrets")
+pub async fn get_session_secrets() -> Result<Secrets, Error> {
+	let secrets_string = read_file(get_config_directory().join("secrets.json")).await?;
+	let secrets: Secrets = serde_json::from_str(&secrets_string)?;
+	if secrets.expires <= Utc::now() {
+		return Err(Error::SecretsExpired(secrets.expires));
+	}
+	Ok(secrets)
 }
 
 /// Returns a session cookie.
-pub fn use_browser_token() -> String {
+pub fn use_browser_token() -> Secrets {
 	let browser = Browser::new(
 		LaunchOptionsBuilder::default()
 			.headless(false)
@@ -85,12 +92,15 @@ pub fn use_browser_token() -> String {
 		.is_empty()
 	{}
 
-	let session = tab
+	let session: Cookie = tab
 		.get_cookies()
 		.expect("failed getting cookies")
 		.into_iter()
 		.find(|cookie| cookie.name == "session")
 		.expect("failed finding session cookie");
-
-	session.value
+	Secrets {
+		session: session.value,
+		expires: DateTime::from_timestamp(session.expires as i64, 0u32)
+			.expect("failed creating DateTime<Utc> for session expiry"),
+	}
 }

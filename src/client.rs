@@ -1,4 +1,4 @@
-use crate::project::Secrets;
+use crate::{error::Error, login::Secrets};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_repr::Deserialize_repr;
@@ -95,7 +95,7 @@ impl Client {
 		}
 	}
 
-	pub async fn get_details(&self) -> anyhow::Result<AccountDetails> {
+	pub async fn get_details(&self) -> Result<AccountDetails, Error> {
 		Ok(serde_json::from_slice(
 			&self
 				.client
@@ -112,7 +112,7 @@ impl Client {
 		)?)
 	}
 
-	pub async fn generate_key(&self, id: &str) -> anyhow::Result<String> {
+	pub async fn generate_key(&self, id: &str) -> Result<String, Error> {
 		#[derive(Deserialize)]
 		struct Key {
 			success: bool,
@@ -142,7 +142,7 @@ impl Client {
 	}
 
 	/// Lists all scripts this account can access.
-	pub async fn list_scripts(&self) -> anyhow::Result<ScriptList> {
+	pub async fn list_scripts(&self) -> Result<ScriptList, Error> {
 		Ok(serde_json::from_slice(
 			&self
 				.client
@@ -160,7 +160,7 @@ impl Client {
 	}
 
 	/// Gets the editor for an id.
-	pub async fn get_editor(&self, id: &str) -> anyhow::Result<Editor> {
+	pub async fn get_editor(&self, id: &str) -> Result<Editor, Error> {
 		Ok(serde_json::from_slice(
 			&self
 				.client
@@ -178,7 +178,7 @@ impl Client {
 		)?)
 	}
 
-	pub async fn set_editor(&self, id: &str, updates: &[EditorUpdate<'_>]) -> anyhow::Result<()> {
+	pub async fn set_editor(&self, id: &str, updates: &[EditorUpdate<'_>]) -> Result<(), Error> {
 		// We use the lifetime 'a to denote that these structs will only live throughout this function.
 		#[derive(Serialize, Debug, Clone)]
 		#[serde(rename_all = "camelCase")]
@@ -246,7 +246,7 @@ impl Client {
 			}
 		}
 
-		self
+		let response = self
 			.client
 			.put(format!("{BASE_URL}/api/script/editor"))
 			.header(
@@ -258,6 +258,10 @@ impl Client {
 			.body(serde_json::to_string(&request_body)?)
 			.send()
 			.await?;
-		Ok(())
+
+		match response.error_for_status() {
+			Ok(_) => Ok(()),
+			Err(e) => Err(Error::ResponseStatus(e.status().expect("exist"))),
+		}
 	}
 }
