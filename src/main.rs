@@ -59,11 +59,8 @@ async fn ensure_config_directory_exists() {
 
 #[tokio::main]
 async fn main() {
-	match main_fn().await {
-		Err(error) => {
-			tracing::error!("{error}")
-		}
-		Ok(..) => {}
+	if let Err(error) = main_fn().await {
+		tracing::error!("{error}")
 	}
 }
 

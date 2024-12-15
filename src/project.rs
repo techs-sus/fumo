@@ -15,6 +15,10 @@ use std::{
 };
 use tokio::sync::{Mutex, Notify};
 use tracing::{info, warn, Instrument};
+pub const SYNC_CONFIGURATION_FILE: &str = "fumosync.json";
+pub const MAIN_SCRIPT_FILE: &str = "init.server.luau";
+pub const PACKAGE_DIRECTORY: &str = "pkg";
+pub const DESCRIPTION_FILE: &str = "README.md";
 
 /// fumosync.json
 #[derive(Deserialize, Serialize, Clone)]
@@ -44,7 +48,9 @@ async fn create_directory<T: AsRef<Path>>(path: T) -> Result<(), Error> {
 }
 
 pub async fn read_configuration() -> Result<Configuration, Error> {
-	Ok(serde_json::from_str(&read_file("fumosync.json").await?)?)
+	Ok(serde_json::from_str(
+		&read_file(SYNC_CONFIGURATION_FILE).await?,
+	)?)
 }
 
 /// Initializes a project for syncing within fumosclub.
@@ -54,7 +60,7 @@ pub async fn init(directory: PathBuf) -> Result<(), Error> {
 	}
 
 	create_directory(directory.clone()).await?;
-	create_directory(directory.join("pkg")).await?;
+	create_directory(directory.join(PACKAGE_DIRECTORY)).await?;
 	create_directory(directory.join(".vscode")).await?;
 
 	write_file(
@@ -72,7 +78,7 @@ pub async fn init(directory: PathBuf) -> Result<(), Error> {
 	)
 	.await?;
 
-	write_file(directory.join("README.md"), r#"# stuff here"#).await?;
+	write_file(directory.join(DESCRIPTION_FILE), r#"# stuff here"#).await?;
 
 	write_file(
 		directory.join("types.d.luau"),
@@ -100,7 +106,7 @@ declare LoadAssets: (assetId: number) -> {
 	.await?;
 
 	write_file(
-		directory.join("fumosync.json"),
+		directory.join(SYNC_CONFIGURATION_FILE),
 		&serde_json::to_string_pretty(&Configuration {
 			script_name: directory
 				.file_name()
@@ -130,19 +136,19 @@ pub async fn pull_project(script_id: String, project_directory: PathBuf) -> Resu
 	let script_info = client.get_editor(&script_id).await?.script_info;
 
 	write_file(
-		project_directory.join("README.md"),
+		project_directory.join(DESCRIPTION_FILE),
 		&script_info.description,
 	)
 	.await?;
 
 	write_file(
-		project_directory.join("init.server.luau"),
+		project_directory.join(MAIN_SCRIPT_FILE),
 		&script_info.source.main,
 	)
 	.await?;
 
 	write_file(
-		project_directory.join("fumosync.json"),
+		project_directory.join(SYNC_CONFIGURATION_FILE),
 		&serde_json::to_string_pretty(&Configuration {
 			script_name: script_info.name,
 			script_id,
@@ -154,7 +160,9 @@ pub async fn pull_project(script_id: String, project_directory: PathBuf) -> Resu
 
 	for (name, source) in script_info.source.modules {
 		write_file(
-			project_directory.join("pkg").join(format!("{name}.luau")),
+			project_directory
+				.join(PACKAGE_DIRECTORY)
+				.join(format!("{name}.luau")),
 			&source,
 		)
 		.await?;
@@ -175,9 +183,7 @@ fn get_module_from_path<T: Into<PathBuf>>(file_name: T) -> String {
 	path_without_extension.to_string_lossy().to_string()
 }
 
-fn get_editor_updates_from_configuration<'a>(
-	configuration: &'a Configuration,
-) -> [EditorUpdate<'a>; 3] {
+fn get_editor_updates_from_configuration(configuration: &Configuration) -> [EditorUpdate<'_>; 3] {
 	let whitelist = configuration.whitelist.iter().map(|x| x.as_str()).collect();
 
 	[
@@ -189,8 +195,8 @@ fn get_editor_updates_from_configuration<'a>(
 
 pub async fn push_project() -> Result<(), Error> {
 	let configuration = read_configuration().await?;
-	let description = &read_file("README.md").await?;
-	let main_source = &read_file("init.server.luau").await?;
+	let description = &read_file(DESCRIPTION_FILE).await?;
+	let main_source = &read_file(MAIN_SCRIPT_FILE).await?;
 
 	let mut actions: Vec<EditorUpdate> = Vec::from([
 		EditorUpdate::Description(description),
@@ -201,7 +207,7 @@ pub async fn push_project() -> Result<(), Error> {
 
 	let mut modules: Vec<(String, String)> = Vec::new();
 
-	let pkg_path = PathBuf::from("pkg");
+	let pkg_path = PathBuf::from(PACKAGE_DIRECTORY);
 	let mut stream = match tokio::fs::read_dir(&pkg_path).await {
 		Ok(value) => value,
 		Err(io_error) => return Err(Error::ReadDirectory(pkg_path, io_error)),
@@ -270,10 +276,10 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 	for update in updates.iter() {
 		let pair = match update {
 			Update::MainSource => Some(UpdatePair::MainSource(
-				read_file(&PathBuf::from("init.server.luau")).await?.into(),
+				read_file(MAIN_SCRIPT_FILE).await?.into(),
 			)),
 			Update::Description => Some(UpdatePair::Description(
-				read_file(&PathBuf::from("README.md")).await?.into(),
+				read_file(DESCRIPTION_FILE).await?.into(),
 			)),
 			Update::ProjectConfiguration => Some(UpdatePair::ProjectConfiguration),
 			Update::Module(path_buf) => match path_buf.file_name() {
@@ -304,10 +310,9 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 			UpdatePair::ProjectConfiguration => {
 				editor_updates.extend(get_editor_updates_from_configuration(&configuration))
 			}
-			UpdatePair::Module { name, source } => editor_updates.push(EditorUpdate::Module {
-				name: &name,
-				source: &source,
-			}),
+			UpdatePair::Module { name, source } => {
+				editor_updates.push(EditorUpdate::Module { name, source })
+			}
 		}
 	}
 
@@ -398,7 +403,7 @@ pub async fn watch_project() -> Result<(), Error> {
 				let is_package = match path.parent() {
 					None => false,
 					Some(parent) => match parent.file_name() {
-						Some(name) => name == "pkg",
+						Some(name) => name == PACKAGE_DIRECTORY,
 						None => false,
 					},
 				};
@@ -409,13 +414,13 @@ pub async fn watch_project() -> Result<(), Error> {
 						info!("package update at {}", path.display());
 						Some(Update::Module(path))
 					} else if !is_package && path.is_file() {
-						if path == Path::new("init.server.luau") {
+						if path == Path::new(MAIN_SCRIPT_FILE) {
 							info!("main source update");
 							Some(Update::MainSource)
-						} else if path == Path::new("README.md") {
+						} else if path == Path::new(DESCRIPTION_FILE) {
 							info!("description update");
 							Some(Update::Description)
-						} else if path == Path::new("fumosync.json") {
+						} else if path == Path::new(SYNC_CONFIGURATION_FILE) {
 							info!("project configuration update");
 							Some(Update::ProjectConfiguration)
 						} else {
@@ -425,11 +430,8 @@ pub async fn watch_project() -> Result<(), Error> {
 						None
 					};
 
-					match update {
-						Some(update) => {
-							updates.push(update);
-						}
-						None => {}
+					if let Some(update) = update {
+						updates.push(update)
 					}
 				}
 				.instrument(watcher_span)
@@ -476,8 +478,8 @@ where
 				}
 				(None, _) => comps.push(Component::ParentDir),
 				(Some(a), Some(b)) if comps.is_empty() && a == b => (),
-				(Some(a), Some(b)) if b == Component::CurDir => comps.push(a),
-				(Some(_), Some(b)) if b == Component::ParentDir => return None,
+				(Some(a), Some(Component::CurDir)) => comps.push(a),
+				(Some(_), Some(Component::ParentDir)) => return None,
 				(Some(a), Some(_)) => {
 					comps.push(Component::ParentDir);
 					for _ in itb {
