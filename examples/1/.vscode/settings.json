@@ -1,0 +1,4 @@
+{
+	"luau-lsp.types.robloxSecurityLevel": "None",
+	"luau-lsp.types.definitionFiles": ["types.d.luau"]
+}

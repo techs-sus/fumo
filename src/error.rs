@@ -29,6 +29,10 @@ pub enum Error {
 	ResponseStatus(StatusCode),
 	#[error("secrets expired at {0}")]
 	SecretsExpired(DateTime<Utc>),
+	#[error("failed finding config directory")]
+	ConfigDirectoryNotFound,
+	#[error("failed diffing paths")]
+	PathDiffFailed,
 }
 
 /// Custom context trait to convert a Option to a Result.

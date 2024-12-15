@@ -1,5 +1,6 @@
 use crate::{
-	error::Error,
+	client::BASE_URL,
+	error::{Context, Error},
 	project::{read_file, write_file},
 };
 use chrono::serde::ts_seconds;
@@ -10,17 +11,19 @@ use headless_chrome::{
 	browser::default_executable, protocol::cdp::Target::CreateTarget, Browser, LaunchOptionsBuilder,
 };
 use serde::{Deserialize, Serialize};
-use std::{ffi::OsStr, path::PathBuf};
+use std::path::PathBuf;
 
-pub fn get_config_directory() -> PathBuf {
-	ProjectDirs::from("com", "techs-sus", "fumosync")
-		.expect("to get directories")
-		.config_local_dir()
-		.to_path_buf()
+pub fn get_config_directory() -> Result<PathBuf, Error> {
+	Ok(
+		ProjectDirs::from("com", "techs-sus", "fumosclub cli")
+			.context(Error::ConfigDirectoryNotFound)?
+			.config_local_dir()
+			.to_path_buf(),
+	)
 }
 
 /// secrets.json
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Secrets {
 	pub session: String,
 	#[serde(with = "ts_seconds")]
@@ -29,14 +32,14 @@ pub struct Secrets {
 
 pub async fn save_session_secrets(secrets: Secrets) -> Result<(), Error> {
 	write_file(
-		get_config_directory().join("secrets.json"),
+		get_config_directory()?.join("secrets.json"),
 		&serde_json::to_string_pretty(&secrets)?,
 	)
 	.await
 }
 
 pub async fn get_session_secrets() -> Result<Secrets, Error> {
-	let secrets_string = read_file(get_config_directory().join("secrets.json")).await?;
+	let secrets_string = read_file(get_config_directory()?.join("secrets.json")).await?;
 	let secrets: Secrets = serde_json::from_str(&secrets_string)?;
 	if secrets.expires <= Utc::now() {
 		return Err(Error::SecretsExpired(secrets.expires));
@@ -59,7 +62,7 @@ pub fn use_browser_token() -> Secrets {
 
 	let tab = browser
 		.new_tab_with_options(CreateTarget {
-			url: "https://fumosclubv1.vercel.app/".to_owned(),
+			url: BASE_URL.to_string(),
 			width: None,
 			height: None,
 			browser_context_id: None,

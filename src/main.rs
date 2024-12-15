@@ -7,35 +7,37 @@ use clap::{Parser, Subcommand};
 use client::Client;
 use error::Error;
 use login::{get_config_directory, get_session_secrets, save_session_secrets, use_browser_token};
-use project::{init, pull_project, push_project, read_configuration};
+use project::{init, pull_project, push_project, read_configuration, watch_project};
 use std::path::PathBuf;
 use tracing::warn;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum Command {
-	/// Logs into fumosclub.
+	/// Login to fumosclub (overwrites existing secrets)
 	Login,
-	/// Shows infomation about the current fumosclub account.
+	/// Shows infomation about the logged in account
 	View,
-	/// Initializes a project in the directory.
+	/// Initializes a project in the specified directory
 	Init { project_directory: PathBuf },
-	/// Lists all projects under the logged in fumosclub account.
+	/// Lists all projects under the logged in account
 	List,
-	/// Pulls down a script from fumosclub (the script must be editable).
+	/// Pulls down a script via the fumosclub API (the script must be editable).
 	Pull {
 		script_id: String,
 		project_directory: PathBuf,
 	},
-	/// Push the script in current directory to fumosclub using the fumosync.json file.
+	/// Pushes the script in current directory to fumosclub; data is sourced from [directory]/fumosync.json
 	Push,
-	/// Generates a key for a script under the logged in fumosclub account.
+	/// Watches the current directory for changes, and pushes them to fumosclub
+	Watch,
+	/// Generates a key for a script under the logged in fumosclub account
 	Generate {
 		#[arg(long)]
 		id: Option<String>,
 	},
 }
 
-/// Fumosync allows you to push and pull local projects to fumosclub.
+/// fumo is a cli tool built for fumosclub (https://fumosclubv1.vercel.app)
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -45,10 +47,11 @@ struct Args {
 
 async fn ensure_config_directory_exists() {
 	if !get_config_directory()
+		.expect("failed getting config directory")
 		.try_exists()
 		.expect("failed verifying the existance of config directory")
 	{
-		tokio::fs::create_dir_all(get_config_directory())
+		tokio::fs::create_dir_all(get_config_directory().expect("failed getting config directory"))
 			.await
 			.expect("failed creating config directory");
 	}
@@ -57,10 +60,10 @@ async fn ensure_config_directory_exists() {
 #[tokio::main]
 async fn main() {
 	match main_fn().await {
-		Err(e) => {
-			tracing::error!("{e}")
+		Err(error) => {
+			tracing::error!("{error}")
 		}
-		Ok(_t) => {}
+		Ok(..) => {}
 	}
 }
 
@@ -71,7 +74,7 @@ async fn main_fn() -> Result<(), Error> {
 		.without_time()
 		.with_level(true)
 		.init();
-	warn!("fumosync is beta software; please report bugs to https://github.com/techs-sus/fumosync");
+	warn!("fumo is alpha software; please report bugs to https://github.com/techs-sus/fumo",);
 	let args = Args::parse();
 	ensure_config_directory_exists().await;
 
@@ -99,8 +102,8 @@ async fn main_fn() -> Result<(), Error> {
 					script.id,
 					script.creator,
 					match script.editable {
-						true => "📝",
-						false => "",
+						true => "🔓",
+						false => "🔐",
 					}
 				)
 			}
@@ -121,6 +124,10 @@ async fn main_fn() -> Result<(), Error> {
 			};
 
 			println!("{}", client.generate_key(&id).await?);
+		}
+
+		Command::Watch => {
+			watch_project().await?;
 		}
 	}
 

@@ -1,10 +1,19 @@
 use crate::{error::Error, login::Secrets};
+use git_version::git_version;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_repr::Deserialize_repr;
 use std::collections::HashMap;
-const USER_AGENT: &str = "fumosync-rs (github.com/techs-sus/fumosync)";
-const BASE_URL: &str = "https://fumosclubv1.vercel.app";
+pub const GIT_VERSION: &str = git_version!(
+	prefix = "git:",
+	cargo_prefix = "cargo:",
+	fallback = "unknown"
+);
+pub const BASE_URL: &str = "https://fumosclubv1.vercel.app";
+
+pub fn get_user_agent() -> String {
+	format!("fumo/{GIT_VERSION}; (https://github.com/techs-sus/fumosync)")
+}
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -45,7 +54,7 @@ pub struct Script {
 	pub is_favorite: bool,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorScriptInfo {
 	pub name: String,
@@ -57,14 +66,14 @@ pub struct EditorScriptInfo {
 	pub source: Source,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Editor {
 	pub success: bool,
 	pub script_info: EditorScriptInfo,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum EditorUpdate<'a> {
 	Description(&'a str),
 	Module { name: &'a str, source: &'a str },
@@ -75,7 +84,7 @@ pub enum EditorUpdate<'a> {
 	Publicity(bool),
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct Source {
 	pub main: String,
 	// key -> source
@@ -104,7 +113,7 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", USER_AGENT)
+				.header("User-Agent", get_user_agent())
 				.send()
 				.await?
 				.bytes()
@@ -127,7 +136,7 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", USER_AGENT)
+				.header("User-Agent", get_user_agent())
 				.header("Content-Type", "application/json")
 				.body(serde_json::to_string(&json!({
 					"scriptId": id
@@ -151,7 +160,7 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", USER_AGENT)
+				.header("User-Agent", get_user_agent())
 				.send()
 				.await?
 				.bytes()
@@ -170,7 +179,7 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", USER_AGENT)
+				.header("User-Agent", get_user_agent())
 				.send()
 				.await?
 				.bytes()
@@ -179,7 +188,6 @@ impl Client {
 	}
 
 	pub async fn set_editor(&self, id: &str, updates: &[EditorUpdate<'_>]) -> Result<(), Error> {
-		// We use the lifetime 'a to denote that these structs will only live throughout this function.
 		#[derive(Serialize, Debug, Clone)]
 		#[serde(rename_all = "camelCase")]
 		struct ScriptInfo<'a> {
@@ -253,7 +261,7 @@ impl Client {
 				"Cookie",
 				format!("session={}", self.secrets.session.clone()),
 			)
-			.header("User-Agent", USER_AGENT)
+			.header("User-Agent", get_user_agent())
 			.header("Content-Type", "application/json")
 			.body(serde_json::to_string(&request_body)?)
 			.send()
@@ -261,7 +269,7 @@ impl Client {
 
 		match response.error_for_status() {
 			Ok(_) => Ok(()),
-			Err(e) => Err(Error::ResponseStatus(e.status().expect("exist"))),
+			Err(e) => Err(Error::ResponseStatus(e.status().expect("must exist"))),
 		}
 	}
 }
