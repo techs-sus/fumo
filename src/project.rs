@@ -78,11 +78,11 @@ pub async fn init(directory: PathBuf) -> Result<(), Error> {
 	)
 	.await?;
 
-	write_file(directory.join(DESCRIPTION_FILE), r#"# stuff here"#).await?;
+	write_file(directory.join(DESCRIPTION_FILE), r"# stuff here").await?;
 
 	write_file(
 		directory.join("types.d.luau"),
-		r#"declare loadstringEnabled: boolean
+		r"declare loadstringEnabled: boolean
 declare owner: Player
 declare arguments: { any }
 
@@ -101,7 +101,7 @@ declare LoadAssets: (assetId: number) -> {
   GetNames: () -> { string },
   GetArray: () -> { Instance },
   GetDictionary: () -> { [string]: Instance }
-}"#,
+}",
 	)
 	.await?;
 
@@ -124,12 +124,12 @@ declare LoadAssets: (assetId: number) -> {
 }
 
 /// Pulls a project from fumosclub and links it via fumosync.json.
-pub async fn pull_project(script_id: String, project_directory: PathBuf) -> Result<(), Error> {
+pub async fn pull(script_id: String, project_directory: PathBuf) -> Result<(), Error> {
 	let client = Client::new(get_session_secrets().await?);
 
 	// setup initial file structure for hydration
 	match init(project_directory.clone()).await {
-		Ok(_) => {}
+		Ok(()) => {}
 		Err(e) => return Err(Error::ProjectDidntInitialize(Box::new(e))),
 	};
 
@@ -184,7 +184,7 @@ fn get_module_from_path<T: Into<PathBuf>>(file_name: T) -> String {
 }
 
 fn get_editor_updates_from_configuration(configuration: &Configuration) -> [EditorUpdate<'_>; 3] {
-	let whitelist = configuration.whitelist.iter().map(|x| x.as_str()).collect();
+	let whitelist = configuration.whitelist.iter().map(String::as_str).collect();
 
 	[
 		EditorUpdate::Name(&configuration.script_name),
@@ -193,7 +193,7 @@ fn get_editor_updates_from_configuration(configuration: &Configuration) -> [Edit
 	]
 }
 
-pub async fn push_project() -> Result<(), Error> {
+pub async fn push() -> Result<(), Error> {
 	let configuration = read_configuration().await?;
 	let description = &read_file(DESCRIPTION_FILE).await?;
 	let main_source = &read_file(MAIN_SCRIPT_FILE).await?;
@@ -232,7 +232,7 @@ pub async fn push_project() -> Result<(), Error> {
 	}
 
 	// use .iter() to force items to have a lifetime bounded by the function
-	for (name, source) in modules.iter() {
+	for (name, source) in &modules {
 		actions.push(EditorUpdate::Module { name, source });
 	}
 
@@ -253,12 +253,6 @@ enum Update {
 
 /// Processes all of the updates, uploads them to fumosclub, and clears the vector when done.
 async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
-	let mut editor_updates: Vec<EditorUpdate<'_>> = Vec::with_capacity(updates.len());
-	// yes we are reading the configuration here but...
-	// technically its not a waste because we only send an editor update when
-	// something actually changes
-	let configuration: Configuration = read_configuration().await?;
-
 	// "why create another enum"
 	// -> lifetime hack #1: Cow<'static, T>
 	enum UpdatePair {
@@ -270,6 +264,12 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 			source: Cow<'static, str>,
 		},
 	}
+
+	let mut editor_updates: Vec<EditorUpdate<'_>> = Vec::with_capacity(updates.len());
+	// yes we are reading the configuration here but...
+	// technically its not a waste because we only send an editor update when
+	// something actually changes
+	let configuration: Configuration = read_configuration().await?;
 
 	let mut update_pairs = vec![];
 
@@ -303,15 +303,15 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 		}
 	}
 
-	for pair in update_pairs.iter() {
+	for pair in &update_pairs {
 		match pair {
 			UpdatePair::MainSource(cow) => editor_updates.push(EditorUpdate::MainSource(cow)),
 			UpdatePair::Description(cow) => editor_updates.push(EditorUpdate::Description(cow)),
 			UpdatePair::ProjectConfiguration => {
-				editor_updates.extend(get_editor_updates_from_configuration(&configuration))
+				editor_updates.extend(get_editor_updates_from_configuration(&configuration));
 			}
 			UpdatePair::Module { name, source } => {
-				editor_updates.push(EditorUpdate::Module { name, source })
+				editor_updates.push(EditorUpdate::Module { name, source });
 			}
 		}
 	}
@@ -326,8 +326,8 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 	Ok(())
 }
 
-pub async fn watch_project() -> Result<(), Error> {
-	push_project().await?;
+pub async fn watch() -> Result<(), Error> {
+	push().await?;
 
 	let (sender, mut receiver) = tokio::sync::mpsc::channel(32);
 
@@ -378,7 +378,7 @@ pub async fn watch_project() -> Result<(), Error> {
 					);
 					match process_updates(&mut lock).await {
 						Ok(..) => {
-							info!("synced successfully!")
+							info!("synced successfully!");
 						}
 						Err(e) => warn!("error whilst processing: {e}"),
 					};
@@ -431,7 +431,7 @@ pub async fn watch_project() -> Result<(), Error> {
 					};
 
 					if let Some(update) = update {
-						updates.push(update)
+						updates.push(update);
 					}
 				}
 				.instrument(watcher_span)

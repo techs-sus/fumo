@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod client;
 mod error;
 mod login;
@@ -7,7 +9,7 @@ use clap::{Parser, Subcommand};
 use client::Client;
 use error::Error;
 use login::{get_config_directory, get_session_secrets, save_session_secrets, use_browser_token};
-use project::{init, pull_project, push_project, read_configuration, watch_project};
+use project::{init, pull, push, read_configuration, watch};
 use std::path::PathBuf;
 use tracing::warn;
 
@@ -32,12 +34,13 @@ pub enum Command {
 	Watch,
 	/// Generates a key for a script under the logged in fumosclub account
 	Generate {
+		/// Id of the script; defaults to the script id in [directory]/fumosync.json
 		#[arg(long)]
 		id: Option<String>,
 	},
 }
 
-/// fumo is a cli tool built for fumosclub (https://fumosclubv1.vercel.app)
+/// fumo is a cli tool built for fumosclub <https://fumosclubv1.vercel.app>
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -60,7 +63,7 @@ async fn ensure_config_directory_exists() {
 #[tokio::main]
 async fn main() {
 	if let Err(error) = main_fn().await {
-		tracing::error!("{error}")
+		tracing::error!("{error}");
 	}
 }
 
@@ -82,7 +85,7 @@ async fn main_fn() -> Result<(), Error> {
 			println!(
 				"{} - {} - {}\n{} currently logged in sessions",
 				details.name, details.roblox_user, details.id, details.num_sessions
-			)
+			);
 		}
 		Command::Init { project_directory } => init(project_directory).await?,
 		Command::Login => save_session_secrets(use_browser_token()).await?,
@@ -91,28 +94,22 @@ async fn main_fn() -> Result<(), Error> {
 			for script in client.list_scripts().await?.scripts {
 				println!(
 					"{} {} ({}) by {} {}",
-					match script.is_favorite {
-						true => "★",
-						false => "☆",
-					},
+					if script.is_favorite { "★" } else { "☆" },
 					script.name,
 					script.id,
 					script.creator,
-					match script.editable {
-						true => "🔓",
-						false => "🔐",
-					}
-				)
+					if script.editable { "🔓" } else { "🔐" }
+				);
 			}
 		}
 		Command::Pull {
 			script_id,
 			project_directory,
 		} => {
-			pull_project(script_id, project_directory).await?;
+			pull(script_id, project_directory).await?;
 		}
 
-		Command::Push => push_project().await?,
+		Command::Push => push().await?,
 		Command::Generate { id } => {
 			let client = Client::new(get_session_secrets().await?);
 			let id = match id {
@@ -124,7 +121,7 @@ async fn main_fn() -> Result<(), Error> {
 		}
 
 		Command::Watch => {
-			watch_project().await?;
+			watch().await?;
 		}
 	}
 

@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_repr::Deserialize_repr;
 use std::collections::HashMap;
+
 pub const GIT_VERSION: &str = git_version!(
-	prefix = "git:",
-	cargo_prefix = "cargo:",
+	prefix = "git-",
+	cargo_prefix = "cargo-",
 	fallback = "unknown"
 );
 pub const BASE_URL: &str = "https://fumosclubv1.vercel.app";
@@ -47,7 +48,7 @@ pub struct Script {
 	pub name: String,
 	pub description: String,
 	#[serde(rename = "type")]
-	pub script_type: ScriptType,
+	pub r#type: ScriptType,
 	pub creator: String,
 	pub creator_icon: String,
 	pub editable: bool,
@@ -100,7 +101,86 @@ impl Client {
 	pub fn new(secrets: Secrets) -> Self {
 		Self {
 			secrets,
-			client: reqwest::Client::new(),
+			client: reqwest::Client::builder()
+				.user_agent(get_user_agent())
+				.https_only(true)
+				.build()
+				.expect("failed building inner reqwest client"),
+		}
+	}
+
+	/// Returns `Ok(())` if the user is authenticated and can proceed with using fumosclub.
+	/// Errors are one of the variants listed below:
+	/// - `InvalidSecrets`
+	/// - `UserIsBanned`
+	/// - `InsufficentAuthorization`
+	/// - `FumosclubAPI(String)`
+	pub async fn is_user_authenticated(&self) -> Result<(), Error> {
+		#[derive(Deserialize)]
+		struct InitialResponse {
+			success: bool,
+			role: Option<i32>,
+			error: Option<String>,
+		}
+
+		let value: InitialResponse = serde_json::from_slice(
+			&self
+				.client
+				.get(format!("{BASE_URL}/api/auth/auth"))
+				.header(
+					"Cookie",
+					format!("session={}", self.secrets.session.clone()),
+				)
+				.send()
+				.await?
+				.bytes()
+				.await?,
+		)?;
+
+		if value.success {
+			let role = value.role.unwrap();
+			if role == -1 {
+				// not logged in
+				return Err(Error::InvalidSecrets);
+			} else if role == -2 {
+				// TODO: Get ban expiry; there is no clear way?
+				#[derive(Deserialize)]
+				struct Ban {
+					reason: Option<String>,
+				}
+				#[derive(Deserialize)]
+				struct BanData {
+					ban: Option<Ban>,
+				}
+
+				let ban_data: BanData = serde_json::from_slice(
+					&self
+						.client
+						.get(format!("{BASE_URL}/api/auth/getbandata"))
+						.header(
+							"Cookie",
+							format!("session={}", self.secrets.session.clone()),
+						)
+						.send()
+						.await?
+						.bytes()
+						.await?,
+				)?;
+
+				if let Some(ban) = ban_data.ban {
+					return Err(Error::UserIsBanned { reason: ban.reason });
+				}
+			} else if role < 1 {
+				// unauthorized
+				return Err(Error::InsufficentAuthorization);
+			};
+
+			Ok(())
+		} else {
+			// ??? internal fumosclub
+			Err(Error::FumosclubAPI(
+				value.error.unwrap_or("(no error provided)".to_string()),
+			))
 		}
 	}
 
@@ -113,7 +193,6 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", get_user_agent())
 				.send()
 				.await?
 				.bytes()
@@ -136,7 +215,6 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", get_user_agent())
 				.header("Content-Type", "application/json")
 				.body(serde_json::to_string(&json!({
 					"scriptId": id
@@ -160,7 +238,6 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", get_user_agent())
 				.send()
 				.await?
 				.bytes()
@@ -179,7 +256,6 @@ impl Client {
 					"Cookie",
 					format!("session={}", self.secrets.session.clone()),
 				)
-				.header("User-Agent", get_user_agent())
 				.send()
 				.await?
 				.bytes()
@@ -247,7 +323,7 @@ impl Client {
 					request_body.script_info.source.main = Some(source);
 				}
 				EditorUpdate::Whitelist(whitelist) => {
-					request_body.script_info.whitelist = Some(whitelist.clone())
+					request_body.script_info.whitelist = Some(whitelist.clone());
 				}
 				EditorUpdate::Name(name) => request_body.script_info.name = Some(name),
 				EditorUpdate::Publicity(public) => request_body.script_info.is_public = Some(*public),
@@ -261,7 +337,6 @@ impl Client {
 				"Cookie",
 				format!("session={}", self.secrets.session.clone()),
 			)
-			.header("User-Agent", get_user_agent())
 			.header("Content-Type", "application/json")
 			.body(serde_json::to_string(&request_body)?)
 			.send()

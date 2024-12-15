@@ -30,6 +30,7 @@ pub struct Secrets {
 	pub expires: DateTime<Utc>,
 }
 
+/// Forcefully saves session secrets.
 pub async fn save_session_secrets(secrets: Secrets) -> Result<(), Error> {
 	write_file(
 		get_config_directory()?.join("secrets.json"),
@@ -38,13 +39,18 @@ pub async fn save_session_secrets(secrets: Secrets) -> Result<(), Error> {
 	.await
 }
 
+/// Gets session secrets, errors if secrets are expired.
 pub async fn get_session_secrets() -> Result<Secrets, Error> {
 	let secrets_string = read_file(get_config_directory()?.join("secrets.json")).await?;
 	let secrets: Secrets = serde_json::from_str(&secrets_string)?;
 	if secrets.expires <= Utc::now() {
 		return Err(Error::SecretsExpired(secrets.expires));
 	}
-	Ok(secrets)
+
+	let client = crate::client::Client::new(secrets);
+	client.is_user_authenticated().await?;
+
+	Ok(client.secrets)
 }
 
 /// Returns a session cookie.
@@ -93,7 +99,9 @@ pub fn use_browser_token() -> Secrets {
 		.get_cookies()
 		.expect("failed getting cookies")
 		.is_empty()
-	{}
+	{
+		std::thread::yield_now();
+	}
 
 	let session: Cookie = tab
 		.get_cookies()
@@ -101,9 +109,10 @@ pub fn use_browser_token() -> Secrets {
 		.into_iter()
 		.find(|cookie| cookie.name == "session")
 		.expect("failed finding session cookie");
+
 	Secrets {
 		session: session.value,
-		expires: DateTime::from_timestamp(session.expires as i64, 0u32)
+		expires: DateTime::from_timestamp(session.expires as i64, 0_u32)
 			.expect("failed creating DateTime<Utc> for session expiry"),
 	}
 }

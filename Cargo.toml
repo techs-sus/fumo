@@ -10,7 +10,7 @@ serde = { version = "1.0.216", features = ["derive"] }
 serde_repr = "0.1"
 serde_json = "1.0.133"
 tokio = { version = "1.42.0", features = ["full"] }
-headless_chrome = { git = "https://github.com/rust-headless-chrome/rust-headless-chrome", features = [
+headless_chrome = { git = "https://github.com/rust-headless-chrome/rust-headless-chrome", rev = "d5d7240c", features = [
 	"fetch",
 ] }
 directories = "5.0.1"

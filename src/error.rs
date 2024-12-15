@@ -33,6 +33,14 @@ pub enum Error {
 	ConfigDirectoryNotFound,
 	#[error("failed diffing paths")]
 	PathDiffFailed,
+	#[error("secrets do not have a high enough role")]
+	InsufficentAuthorization,
+	#[error("invalid secrets; authentication required")]
+	InvalidSecrets,
+	#[error("the user is banned for {:?}", .reason.as_ref().unwrap_or(&"(no reason provided)".to_string()))]
+	UserIsBanned { reason: Option<String> },
+	#[error("fumosclub api error: {0}")]
+	FumosclubAPI(String),
 }
 
 /// Custom context trait to convert a Option to a Result.
@@ -46,16 +54,10 @@ where
 
 impl<T, E> Context<T, E> for Option<T> {
 	fn context(self, error: E) -> Result<T, E> {
-		match self {
-			Some(value) => Ok(value),
-			None => Err(error),
-		}
+		self.map_or_else(|| Err(error), |value| Ok(value))
 	}
 
 	fn with_context<F: FnOnce() -> E>(self, f: F) -> Result<T, E> {
-		match self {
-			Some(value) => Ok(value),
-			None => Err(f()),
-		}
+		self.map_or_else(|| Err(f()), |value| Ok(value))
 	}
 }
