@@ -48,7 +48,7 @@ pub async fn get_session_secrets() -> Result<Secrets, Error> {
 	}
 
 	let client = crate::client::Client::new(secrets);
-	client.is_user_authenticated().await?;
+	client.ensure_user_authenticated().await?;
 
 	Ok(client.secrets)
 }

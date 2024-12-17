@@ -37,7 +37,7 @@ pub enum Error {
 	InsufficentAuthorization,
 	#[error("invalid secrets; authentication required")]
 	InvalidSecrets,
-	#[error("the user is banned for {:?}", .reason.as_ref().unwrap_or(&"(no reason provided)".to_string()))]
+	#[error("the user is banned for {:?}", .reason.as_ref().map(|e| e.as_str()).unwrap_or_else(|| "(no reason provided)"))]
 	UserIsBanned { reason: Option<String> },
 	#[error("fumosclub api error: {0}")]
 	FumosclubAPI(String),

@@ -110,7 +110,7 @@ declare LoadAssets: (assetId: number) -> {
 		&serde_json::to_string_pretty(&Configuration {
 			script_name: directory
 				.file_name()
-				.unwrap_or(OsStr::new("unknown"))
+				.unwrap_or_else(|| OsStr::new("unknown"))
 				.to_string_lossy()
 				.to_string(),
 			script_id: "???".to_owned(),
@@ -219,7 +219,7 @@ pub async fn push() -> Result<(), Error> {
 				&& module
 					.path()
 					.extension()
-					.unwrap_or(OsStr::new(""))
+					.unwrap_or_else(|| OsStr::new(""))
 					.to_string_lossy()
 					== "luau"
 			{
@@ -400,13 +400,11 @@ pub async fn watch() -> Result<(), Error> {
 				let watcher_span = tracing::info_span!("watcher");
 				// diff the paths to get a relative PathBuf
 				let path = diff_paths(path, &current_dir).context(Error::PathDiffFailed)?;
-				let is_package = match path.parent() {
-					None => false,
-					Some(parent) => match parent.file_name() {
-						Some(name) => name == PACKAGE_DIRECTORY,
-						None => false,
-					},
-				};
+				let is_package = path.parent().map_or(false, |parent| {
+					parent
+						.file_name()
+						.map_or(false, |name| name == PACKAGE_DIRECTORY)
+				});
 
 				async {
 					let update = if is_package && !path.is_dir() {

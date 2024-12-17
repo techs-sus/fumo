@@ -5,7 +5,7 @@ use serde_json::json;
 use serde_repr::Deserialize_repr;
 use std::collections::HashMap;
 
-pub const GIT_VERSION: &str = git_version!(
+pub const PROGRAM_VERSION: &str = git_version!(
 	prefix = "git-",
 	cargo_prefix = "cargo-",
 	fallback = "unknown"
@@ -13,7 +13,7 @@ pub const GIT_VERSION: &str = git_version!(
 pub const BASE_URL: &str = "https://fumosclubv1.vercel.app";
 
 pub fn get_user_agent() -> String {
-	format!("fumo/{GIT_VERSION}; (https://github.com/techs-sus/fumosync)")
+	format!("fumo/{PROGRAM_VERSION}; (https://github.com/techs-sus/fumosync)")
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -115,7 +115,7 @@ impl Client {
 	/// - `UserIsBanned`
 	/// - `InsufficentAuthorization`
 	/// - `FumosclubAPI(String)`
-	pub async fn is_user_authenticated(&self) -> Result<(), Error> {
+	pub async fn ensure_user_authenticated(&self) -> Result<(), Error> {
 		#[derive(Deserialize)]
 		struct InitialResponse {
 			success: bool,
@@ -179,7 +179,9 @@ impl Client {
 		} else {
 			// ??? internal fumosclub
 			Err(Error::FumosclubAPI(
-				value.error.unwrap_or("(no error provided)".to_string()),
+				value
+					.error
+					.unwrap_or_else(|| String::from("(no error provided)")),
 			))
 		}
 	}
