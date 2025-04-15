@@ -3,7 +3,7 @@ use crate::{
 	error::{Context, Error},
 	login::get_session_secrets,
 };
-use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
+use notify_debouncer_full::{DebounceEventResult, new_debouncer, notify::RecursiveMode};
 use serde::{Deserialize, Serialize};
 use std::{
 	borrow::Cow,
@@ -14,7 +14,8 @@ use std::{
 	time::Duration,
 };
 use tokio::sync::{Mutex, Notify};
-use tracing::{info, warn, Instrument};
+use tracing::{Instrument, info, warn};
+
 pub const SYNC_CONFIGURATION_FILE: &str = "fumosync.json";
 pub const MAIN_SCRIPT_FILE: &str = "init.server.luau";
 pub const PACKAGE_DIRECTORY: &str = "pkg";
@@ -400,10 +401,10 @@ pub async fn watch() -> Result<(), Error> {
 				let watcher_span = tracing::info_span!("watcher");
 				// diff the paths to get a relative PathBuf
 				let path = diff_paths(path, &current_dir).context(Error::PathDiffFailed)?;
-				let is_package = path.parent().map_or(false, |parent| {
+				let is_package = path.parent().is_some_and(|parent| {
 					parent
 						.file_name()
-						.map_or(false, |name| name == PACKAGE_DIRECTORY)
+						.is_some_and(|name| name == PACKAGE_DIRECTORY)
 				});
 
 				async {

@@ -6,9 +6,8 @@ use crate::{
 use chrono::serde::ts_seconds;
 use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
-use headless_chrome::protocol::cdp::Network::Cookie;
 use headless_chrome::{
-	browser::default_executable, protocol::cdp::Target::CreateTarget, Browser, LaunchOptionsBuilder,
+	Browser, LaunchOptionsBuilder, browser::default_executable, protocol::cdp::Target::CreateTarget,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -75,6 +74,7 @@ pub fn use_browser_token() -> Secrets {
 			enable_begin_frame_control: None,
 			new_window: None,
 			background: None,
+			for_tab: None,
 		})
 		.expect("failed creating new tab");
 
@@ -95,24 +95,22 @@ pub fn use_browser_token() -> Secrets {
 			}
 		});
 
-	while tab
-		.get_cookies()
-		.expect("failed getting cookies")
-		.is_empty()
-	{
-		std::thread::yield_now();
-	}
+	let session = loop {
+		if let Some(session) = tab
+			.get_cookies()
+			.expect("failed getting cookies")
+			.into_iter()
+			.find(|cookie| cookie.name == "session")
+		{
+			break session;
+		}
 
-	let session: Cookie = tab
-		.get_cookies()
-		.expect("failed getting cookies")
-		.into_iter()
-		.find(|cookie| cookie.name == "session")
-		.expect("failed finding session cookie");
+		std::thread::yield_now();
+	};
 
 	Secrets {
 		session: session.value,
-		expires: DateTime::from_timestamp(session.expires as i64, 0_u32)
+		expires: DateTime::from_timestamp(session.expires as i64, 0u32)
 			.expect("failed creating DateTime<Utc> for session expiry"),
 	}
 }

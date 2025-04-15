@@ -75,7 +75,9 @@ async fn main_fn() -> Result<(), Error> {
 		.with_level(true)
 		.init();
 	warn!("fumo is alpha software; please report bugs to https://github.com/techs-sus/fumo",);
+
 	let args = Args::parse();
+
 	ensure_config_directory_exists().await;
 
 	match args.command {

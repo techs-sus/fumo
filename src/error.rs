@@ -1,7 +1,6 @@
-use std::path::PathBuf;
-
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
+use std::path::PathBuf;
 use thiserror::Error;
 use tokio::io;
 
@@ -37,7 +36,7 @@ pub enum Error {
 	InsufficentAuthorization,
 	#[error("invalid secrets; authentication required")]
 	InvalidSecrets,
-	#[error("the user is banned for {:?}", .reason.as_ref().map(|e| e.as_str()).unwrap_or_else(|| "(no reason provided)"))]
+	#[error("the user is banned for {:?}", .reason.as_ref().map_or_else(|| "(no reason provided)", String::as_str))]
 	UserIsBanned { reason: Option<String> },
 	#[error("fumosclub api error: {0}")]
 	FumosclubAPI(String),
