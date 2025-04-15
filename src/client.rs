@@ -334,7 +334,7 @@ impl Client {
 
 		let response = self
 			.client
-			.put(format!("{BASE_URL}/api/script/editor"))
+			.patch(format!("{BASE_URL}/api/script/editor"))
 			.header(
 				"Cookie",
 				format!("session={}", self.secrets.session.clone()),
