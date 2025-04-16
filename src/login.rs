@@ -1,16 +1,16 @@
 use crate::{
-	client::BASE_URL,
+	client::{BASE_URL, Client, DOMAIN},
 	error::{Context, Error},
 	project::{read_file, write_file},
 };
-use chrono::serde::ts_seconds;
 use chrono::{DateTime, Utc};
+use chrono::{Months, serde::ts_seconds};
 use directories::ProjectDirs;
 use headless_chrome::{
 	Browser, LaunchOptionsBuilder, browser::default_executable, protocol::cdp::Target::CreateTarget,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 pub fn get_config_directory() -> Result<PathBuf, Error> {
 	Ok(
@@ -22,7 +22,7 @@ pub fn get_config_directory() -> Result<PathBuf, Error> {
 }
 
 /// secrets.json
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Secrets {
 	pub session: String,
 	#[serde(with = "ts_seconds")]
@@ -52,8 +52,64 @@ pub async fn get_session_secrets() -> Result<Secrets, Error> {
 	Ok(client.secrets)
 }
 
-/// Returns a session cookie.
-pub fn use_browser_token() -> Secrets {
+pub async fn use_browser_token() -> Secrets {
+	let secrets = rookie::load(Some(vec![DOMAIN.to_string()]))
+		.unwrap()
+		.into_iter()
+		.filter(|cookie| cookie.name == "session")
+		.map(|cookie| Secrets {
+			session: cookie.value,
+			expires: DateTime::from_timestamp_millis(
+				cookie
+					.expires
+					.map(|expiry| expiry as i64)
+					.unwrap_or_else(|| {
+						Utc::now()
+							.checked_add_months(Months::new(3))
+							.unwrap()
+							.timestamp()
+					}),
+			)
+			.unwrap(),
+		})
+		.collect::<Vec<Secrets>>();
+
+	match secrets.is_empty() {
+		true => {
+			panic!("no session cookies were found in any browser supported by rookie");
+		}
+
+		// show deduplicated list of cookies, and ask user which one to use
+		false => {
+			let option_to_session =
+				futures::future::join_all(secrets.into_iter().map(|secret| async move {
+					let client = Client::new(secret.clone());
+					(secret, client.get_details().await)
+				}))
+				.await
+				.into_iter()
+				.filter_map(|(secret, result)| result.map(|details| (secret, details)).ok())
+				.map(|(secret, details)| {
+					(
+						format!(
+							"{} ({}, roblox user {})",
+							details.name, details.id, details.roblox_user
+						),
+						secret,
+					)
+				})
+				.collect::<HashMap<String, Secrets>>();
+
+			let select =
+				inquire::Select::new("Pick a session to use.", option_to_session.keys().collect());
+			let selected_key = select.prompt().unwrap();
+
+			option_to_session[selected_key].to_owned()
+		}
+	}
+}
+
+pub fn use_headful_chrome() -> Secrets {
 	let browser = Browser::new(
 		LaunchOptionsBuilder::default()
 			.headless(false)

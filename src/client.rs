@@ -11,6 +11,7 @@ pub const PROGRAM_VERSION: &str = git_version!(
 	fallback = "unknown"
 );
 pub const BASE_URL: &str = "https://fumosclubv1.vercel.app";
+pub const DOMAIN: &str = "fumosclubv1.vercel.app";
 
 pub fn get_user_agent() -> String {
 	format!("fumo/{PROGRAM_VERSION}; (https://github.com/techs-sus/fumosync)")
@@ -109,12 +110,15 @@ impl Client {
 		}
 	}
 
-	/// Returns `Ok(())` if the user is authenticated and can proceed with using fumosclub.
-	/// Errors are one of the variants listed below:
-	/// - `InvalidSecrets`
-	/// - `UserIsBanned`
-	/// - `InsufficentAuthorization`
-	/// - `FumosclubAPI(String)`
+	/// Returns `Ok(())` if the user is authenticated.
+	///
+	/// # Errors
+	/// - [`Error::NotLoggedIn`]
+	/// - [`Error::UserIsBanned`]
+	/// - [`Error::InsufficentAuthorization`]
+	/// - [`Error::FumosclubAPI`]
+	/// - [`Error::Reqwest`]
+	/// - [`Error::Serde`]
 	pub async fn ensure_user_authenticated(&self) -> Result<(), Error> {
 		#[derive(Deserialize)]
 		struct InitialResponse {
@@ -139,9 +143,10 @@ impl Client {
 
 		if value.success {
 			let role = value.role.unwrap();
+
 			if role == -1 {
 				// not logged in
-				return Err(Error::InvalidSecrets);
+				return Err(Error::NotLoggedIn);
 			} else if role == -2 {
 				// TODO: Get ban expiry; there is no clear way?
 				#[derive(Deserialize)]
@@ -186,6 +191,11 @@ impl Client {
 		}
 	}
 
+	/// Gets the current logged in account's details.
+	///
+	/// # Errors
+	/// - [`Error::Reqwest`]
+	/// - [`Error::Serde`]
 	pub async fn get_details(&self) -> Result<AccountDetails, Error> {
 		Ok(serde_json::from_slice(
 			&self
@@ -202,6 +212,13 @@ impl Client {
 		)?)
 	}
 
+	/// Generates a key for a fumosclub script.
+	///
+	/// # Errors
+	/// - [`Error::InvalidKeyGenerationTarget`]
+	/// - [`Error::Reqwest`]
+	/// - [`Error::ResponseStatus`]
+	/// - [`Error::Serde`]
 	pub async fn generate_key(&self, id: &str) -> Result<String, Error> {
 		#[derive(Deserialize)]
 		struct Key {
@@ -209,28 +226,44 @@ impl Client {
 			require: String,
 		}
 
-		let value: Key = serde_json::from_slice(
-			&self
-				.client
-				.post(format!("{BASE_URL}/api/script/generatekey"))
-				.header(
-					"Cookie",
-					format!("session={}", self.secrets.session.clone()),
-				)
-				.header("Content-Type", "application/json")
-				.body(serde_json::to_string(&json!({
-					"scriptId": id
-				}))?)
-				.send()
-				.await?
-				.bytes()
-				.await?,
-		)?;
+		match self
+			.client
+			.post(format!("{BASE_URL}/api/script/generatekey"))
+			.header(
+				"Cookie",
+				format!("session={}", self.secrets.session.clone()),
+			)
+			.header("Content-Type", "application/json")
+			.body(serde_json::to_string(&json!({
+				"scriptId": id
+			}))?)
+			.send()
+			.await?
+			.error_for_status()
+		{
+			Ok(response) => {
+				let value: Key = serde_json::from_slice(&response.bytes().await?)?;
 
-		Ok(value.require)
+				Ok(value.require)
+			}
+
+			Err(error) => {
+				let status = error.status().unwrap_or_else(|| unreachable!());
+
+				Err(if status == 400 {
+					Error::InvalidKeyGenerationTarget
+				} else {
+					Error::ResponseStatus(status)
+				})
+			}
+		}
 	}
 
 	/// Lists all scripts this account can access.
+	///
+	/// # Errors
+	/// - [`Error::Reqwest`]
+	/// - [`Error::Serde`]
 	pub async fn list_scripts(&self) -> Result<ScriptList, Error> {
 		Ok(serde_json::from_slice(
 			&self
@@ -247,7 +280,11 @@ impl Client {
 		)?)
 	}
 
-	/// Gets the editor for an id.
+	/// Gets the editor (source data) for a script or package id.
+	///
+	/// # Errors
+	/// - [`Error::Reqwest`]
+	/// - [`Error::Serde`]
 	pub async fn get_editor(&self, id: &str) -> Result<Editor, Error> {
 		Ok(serde_json::from_slice(
 			&self
@@ -265,6 +302,11 @@ impl Client {
 		)?)
 	}
 
+	/// Updates a script or package, via the editor API.
+	///
+	/// # Errors
+	/// - [`Error::Reqwest`]
+	/// - [`Error::Serde`]
 	pub async fn set_editor(&self, id: &str, updates: &[EditorUpdate<'_>]) -> Result<(), Error> {
 		#[derive(Serialize, Debug, Clone)]
 		#[serde(rename_all = "camelCase")]
@@ -345,8 +387,8 @@ impl Client {
 			.await?;
 
 		match response.error_for_status() {
-			Ok(_) => Ok(()),
-			Err(e) => Err(Error::ResponseStatus(e.status().expect("must exist"))),
+			Ok(..) => Ok(()),
+			Err(error) => Err(Error::ResponseStatus(error.status().expect("must exist"))),
 		}
 	}
 }

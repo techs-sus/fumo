@@ -8,7 +8,10 @@ mod project;
 use clap::{Parser, Subcommand};
 use client::Client;
 use error::Error;
-use login::{get_config_directory, get_session_secrets, save_session_secrets, use_browser_token};
+use login::{
+	get_config_directory, get_session_secrets, save_session_secrets, use_browser_token,
+	use_headful_chrome,
+};
 use project::{init, pull, push, read_configuration, watch};
 use std::path::PathBuf;
 use tracing::warn;
@@ -16,7 +19,11 @@ use tracing::warn;
 #[derive(Subcommand, Clone, Debug)]
 pub enum Command {
 	/// Login to fumosclub (overwrites existing secrets)
-	Login,
+	Login {
+		/// Whether or not to spawn an instance of Chrome/Chromium in order to login to fumosclub.
+		#[arg(short, long, default_value_t = false)]
+		spawn_chromium: bool,
+	},
 	/// Shows infomation about the logged in account
 	View,
 	/// Initializes a project in the specified directory
@@ -28,13 +35,13 @@ pub enum Command {
 		script_id: String,
 		project_directory: PathBuf,
 	},
-	/// Pushes the script in current directory to fumosclub; data is sourced from [directory]/fumosync.json
+	/// Pushes the script in current directory to fumosclub; data is sourced from [current_directory]/fumosync.json
 	Push,
 	/// Watches the current directory for changes, and pushes them to fumosclub
 	Watch,
 	/// Generates a key for a script under the logged in fumosclub account
 	Generate {
-		/// Id of the script; defaults to the script id in [directory]/fumosync.json
+		/// Id of the script; defaults to the script id in [current_directory]/fumosync.json
 		#[arg(long)]
 		id: Option<String>,
 	},
@@ -90,7 +97,14 @@ async fn main_fn() -> Result<(), Error> {
 			);
 		}
 		Command::Init { project_directory } => init(project_directory).await?,
-		Command::Login => save_session_secrets(use_browser_token()).await?,
+		Command::Login { spawn_chromium } => {
+			save_session_secrets(if spawn_chromium {
+				use_headful_chrome()
+			} else {
+				use_browser_token().await
+			})
+			.await?
+		}
 		Command::List => {
 			let client = Client::new(get_session_secrets().await?);
 			for script in client.list_scripts().await?.scripts {

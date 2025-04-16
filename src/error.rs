@@ -36,6 +36,10 @@ pub enum Error {
 	InsufficentAuthorization,
 	#[error("invalid secrets; authentication required")]
 	InvalidSecrets,
+	#[error("the id specified for key generation is either invalid or designated for a package")]
+	InvalidKeyGenerationTarget,
+	#[error("invalid secrets; API returned a \"not logged in\" response")]
+	NotLoggedIn,
 	#[error("the user is banned for {:?}", .reason.as_ref().map_or_else(|| "(no reason provided)", String::as_str))]
 	UserIsBanned { reason: Option<String> },
 	#[error("fumosclub api error: {0}")]
