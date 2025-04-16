@@ -27,6 +27,10 @@
         };
       in {
         devShells.default = pkgs.mkShell {
+          nativeBuildInputs = [
+            pkgs.pkg-config
+          ];
+
           buildInputs = [
             (pkgs.rust-bin.stable.latest.default.override {
               extensions = [
