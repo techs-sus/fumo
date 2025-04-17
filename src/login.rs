@@ -59,7 +59,7 @@ pub async fn use_browser_token() -> Secrets {
 		.filter(|cookie| cookie.name == "session")
 		.map(|cookie| Secrets {
 			session: cookie.value,
-			expires: DateTime::from_timestamp_millis(
+			expires: DateTime::from_timestamp(
 				cookie
 					.expires
 					.map(|expiry| expiry as i64)
@@ -69,6 +69,7 @@ pub async fn use_browser_token() -> Secrets {
 							.unwrap()
 							.timestamp()
 					}),
+				0,
 			)
 			.unwrap(),
 		})
