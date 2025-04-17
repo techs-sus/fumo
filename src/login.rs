@@ -60,54 +60,46 @@ pub async fn use_browser_token() -> Secrets {
 		.map(|cookie| Secrets {
 			session: cookie.value,
 			expires: DateTime::from_timestamp(
-				cookie
-					.expires
-					.map(|expiry| expiry as i64)
-					.unwrap_or_else(|| {
+				cookie.expires.map_or_else(
+					|| {
 						Utc::now()
 							.checked_add_months(Months::new(3))
 							.unwrap()
 							.timestamp()
-					}),
+					},
+					|expiry| expiry as i64,
+				),
 				0,
 			)
 			.unwrap(),
 		})
 		.collect::<Vec<Secrets>>();
 
-	match secrets.is_empty() {
-		true => {
-			panic!("no session cookies were found in any browser supported by rookie");
-		}
-
-		// show deduplicated list of cookies, and ask user which one to use
-		false => {
-			let option_to_session =
-				futures::future::join_all(secrets.into_iter().map(|secret| async move {
-					let client = Client::new(secret.clone());
-					(secret, client.get_details().await)
-				}))
-				.await
-				.into_iter()
-				.filter_map(|(secret, result)| result.map(|details| (secret, details)).ok())
-				.map(|(secret, details)| {
-					(
-						format!(
-							"{} ({}, roblox user {})",
-							details.name, details.id, details.roblox_user
-						),
-						secret,
-					)
-				})
-				.collect::<HashMap<String, Secrets>>();
-
-			let select =
-				inquire::Select::new("Pick a session to use.", option_to_session.keys().collect());
-			let selected_key = select.prompt().unwrap();
-
-			option_to_session[selected_key].to_owned()
-		}
+	if secrets.is_empty() {
+		panic!("no session cookies were found in any browser supported by rookie");
 	}
+
+	let option_to_session = futures::future::join_all(secrets.into_iter().map(|secret| async move {
+		let client = Client::new(secret.clone());
+		(secret, client.get_details().await)
+	}))
+	.await
+	.into_iter()
+	.filter_map(|(secret, result)| result.map(|details| (secret, details)).ok())
+	.map(|(secret, details)| {
+		(
+			format!(
+				"{} ({}, roblox user {})",
+				details.name, details.id, details.roblox_user
+			),
+			secret,
+		)
+	})
+	.collect::<HashMap<String, Secrets>>();
+
+	let select = inquire::Select::new("Pick a session to use.", option_to_session.keys().collect());
+	let selected_option = select.prompt().unwrap();
+	option_to_session[selected_option].to_owned()
 }
 
 pub fn use_headful_chrome() -> Secrets {

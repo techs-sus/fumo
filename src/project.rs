@@ -3,11 +3,12 @@ use crate::{
 	error::{Context, Error},
 	login::get_session_secrets,
 };
-use notify_debouncer_full::{DebounceEventResult, new_debouncer, notify::RecursiveMode};
+use notify_debouncer_full::{
+	DebounceEventResult, new_debouncer,
+	notify::{EventKind, RecursiveMode, event::ModifyKind},
+};
 use serde::{Deserialize, Serialize};
 use std::{
-	borrow::Cow,
-	env::current_dir,
 	ffi::OsStr,
 	path::{Component, Path, PathBuf},
 	sync::Arc,
@@ -48,9 +49,11 @@ async fn create_directory<T: AsRef<Path>>(path: T) -> Result<(), Error> {
 	}
 }
 
-pub async fn read_configuration() -> Result<Configuration, Error> {
+pub async fn read_configuration<T: AsRef<Path>>(
+	project_directory: T,
+) -> Result<Configuration, Error> {
 	Ok(serde_json::from_str(
-		&read_file(SYNC_CONFIGURATION_FILE).await?,
+		&read_file(project_directory.as_ref().join(SYNC_CONFIGURATION_FILE)).await?,
 	)?)
 }
 
@@ -194,10 +197,12 @@ fn get_editor_updates_from_configuration(configuration: &Configuration) -> [Edit
 	]
 }
 
-pub async fn push() -> Result<(), Error> {
-	let configuration = read_configuration().await?;
-	let description = &read_file(DESCRIPTION_FILE).await?;
-	let main_source = &read_file(MAIN_SCRIPT_FILE).await?;
+pub async fn push<T: AsRef<Path>>(project_directory: T) -> Result<(), Error> {
+	let project_directory = project_directory.as_ref();
+
+	let configuration = read_configuration(project_directory).await?;
+	let description = &read_file(project_directory.join(DESCRIPTION_FILE)).await?;
+	let main_source = &read_file(project_directory.join(MAIN_SCRIPT_FILE)).await?;
 
 	let mut actions: Vec<EditorUpdate> = Vec::from([
 		EditorUpdate::Description(description),
@@ -208,7 +213,7 @@ pub async fn push() -> Result<(), Error> {
 
 	let mut modules: Vec<(String, String)> = Vec::new();
 
-	let pkg_path = PathBuf::from(PACKAGE_DIRECTORY);
+	let pkg_path = project_directory.join(PACKAGE_DIRECTORY);
 	let mut stream = match tokio::fs::read_dir(&pkg_path).await {
 		Ok(value) => value,
 		Err(io_error) => return Err(Error::ReadDirectory(pkg_path, io_error)),
@@ -253,34 +258,35 @@ enum Update {
 }
 
 /// Processes all of the updates, uploads them to fumosclub, and clears the vector when done.
-async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
-	// "why create another enum"
-	// -> lifetime hack #1: Cow<'static, T>
+async fn process_updates<T: AsRef<Path>>(
+	project_directory: T,
+	updates: &mut Vec<Update>,
+) -> Result<(), Error> {
+	let project_directory = project_directory.as_ref();
+	/* "why use another vector... very inefficent"
+		1. filesystem I/O -> String (direct ownership, no copies or clones)
+		2. String -> EditorPair (rust move semantics, no clones or clones)
+		3. &EditorPair -> EditorUpdate<'lt> (zero-cost moving abstraction)
+	*/
 	enum UpdatePair {
-		MainSource(Cow<'static, str>),
-		Description(Cow<'static, str>),
+		MainSource(String),
+		Description(String),
 		ProjectConfiguration,
-		Module {
-			name: Cow<'static, str>,
-			source: Cow<'static, str>,
-		},
+		Module { name: String, source: String },
 	}
 
 	let mut editor_updates: Vec<EditorUpdate<'_>> = Vec::with_capacity(updates.len());
-	// yes we are reading the configuration here but...
-	// technically its not a waste because we only send an editor update when
-	// something actually changes
-	let configuration: Configuration = read_configuration().await?;
-
-	let mut update_pairs = vec![];
+	// we must read the project configuration eventually because we need the project's id
+	let configuration: Configuration = read_configuration(project_directory).await?;
+	let mut update_pairs: Vec<UpdatePair> = Vec::with_capacity(updates.len());
 
 	for update in updates.iter() {
 		let pair = match update {
 			Update::MainSource => Some(UpdatePair::MainSource(
-				read_file(MAIN_SCRIPT_FILE).await?.into(),
+				read_file(project_directory.join(MAIN_SCRIPT_FILE)).await?,
 			)),
 			Update::Description => Some(UpdatePair::Description(
-				read_file(DESCRIPTION_FILE).await?.into(),
+				read_file(project_directory.join(DESCRIPTION_FILE)).await?,
 			)),
 			Update::ProjectConfiguration => Some(UpdatePair::ProjectConfiguration),
 			Update::Module(path_buf) => match path_buf.file_name() {
@@ -289,12 +295,13 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 						"module at {} has no file name, skipping...",
 						path_buf.display()
 					);
+
 					None
 				}
 
 				Some(file_name) => Some(UpdatePair::Module {
-					name: get_module_from_path(file_name).into(),
-					source: read_file(path_buf).await?.into(),
+					name: get_module_from_path(file_name),
+					source: read_file(project_directory.join(path_buf)).await?,
 				}),
 			},
 		};
@@ -306,8 +313,10 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 
 	for pair in &update_pairs {
 		match pair {
-			UpdatePair::MainSource(cow) => editor_updates.push(EditorUpdate::MainSource(cow)),
-			UpdatePair::Description(cow) => editor_updates.push(EditorUpdate::Description(cow)),
+			UpdatePair::MainSource(source) => editor_updates.push(EditorUpdate::MainSource(source)),
+			UpdatePair::Description(description) => {
+				editor_updates.push(EditorUpdate::Description(description));
+			}
 			UpdatePair::ProjectConfiguration => {
 				editor_updates.extend(get_editor_updates_from_configuration(&configuration));
 			}
@@ -327,17 +336,22 @@ async fn process_updates(updates: &mut Vec<Update>) -> Result<(), Error> {
 	Ok(())
 }
 
-pub async fn watch() -> Result<(), Error> {
-	push().await?;
+pub async fn watch(project_directory: PathBuf) -> Result<(), Error> {
+	let project_directory = std::fs::canonicalize(project_directory)?;
+	push(&project_directory).await?;
 
 	let (sender, mut receiver) = tokio::sync::mpsc::channel(32);
 
 	let mut debouncer = new_debouncer(
-		Duration::from_secs(5),
+		Duration::from_secs(2),
 		None,
 		move |result: DebounceEventResult| match result {
-			Ok(events) => sender.blocking_send(events).expect("failed sending"),
-			Err(errors) => errors.iter().for_each(|error| tracing::error!("{error}")),
+			Ok(events) => sender
+				.blocking_send(events)
+				.expect("failed sending event to async task loop"),
+			Err(errors) => errors
+				.iter()
+				.for_each(|error| tracing::error!("got error from debouncer: {error}")),
 		},
 	)
 	.unwrap();
@@ -345,16 +359,17 @@ pub async fn watch() -> Result<(), Error> {
 	// Add a path to be watched. All files and directories at that path and
 	// below will be monitored for changes.
 	debouncer
-		.watch(Path::new("."), RecursiveMode::NonRecursive)
+		.watch(&project_directory, RecursiveMode::NonRecursive)
 		.unwrap();
 
 	// Add a path to be watched. All files and directories at that path and
 	// below will be monitored for changes.
 	debouncer
-		.watch(Path::new("./pkg"), RecursiveMode::NonRecursive)
+		.watch(
+			project_directory.join(PACKAGE_DIRECTORY),
+			RecursiveMode::Recursive,
+		)
 		.unwrap();
-
-	let current_dir = current_dir()?;
 
 	let updates: Arc<Mutex<Vec<Update>>> = Arc::new(Mutex::new(Vec::with_capacity(16)));
 	let notify = Arc::new(Notify::new());
@@ -362,6 +377,7 @@ pub async fn watch() -> Result<(), Error> {
 	let updates_arc = updates.clone();
 	let notify_arc = notify.clone();
 
+	let update_project_directory = project_directory.clone();
 	tokio::spawn(async move {
 		loop {
 			// wait for updates
@@ -371,13 +387,15 @@ pub async fn watch() -> Result<(), Error> {
 			// if the lock is empty (which it shouldnt be), we don't clear it
 			if !lock.is_empty() {
 				let sync_span = tracing::info_span!("sync");
-				async move {
+
+				async {
 					info!(
 						"processing {} update{}...",
 						lock.len(),
 						if lock.len() == 1 { "" } else { "s" }
 					);
-					match process_updates(&mut lock).await {
+
+					match process_updates(&update_project_directory, &mut lock).await {
 						Ok(..) => {
 							info!("synced successfully!");
 						}
@@ -393,14 +411,26 @@ pub async fn watch() -> Result<(), Error> {
 		}
 	});
 
+	info!("watcher is ready to receive events");
+
 	while let Some(events) = receiver.recv().await {
 		let mut updates = updates.lock().await;
 		let starting_len = updates.len();
 		for event in events {
+			// neovim and other editors send access events every 2 seconds...
+			// so we skip events that are useless
+			match event.kind {
+				EventKind::Other | EventKind::Access(..) | EventKind::Modify(ModifyKind::Metadata(..)) => {
+					continue;
+				}
+
+				EventKind::Any | EventKind::Modify(..) | EventKind::Create(..) | EventKind::Remove(..) => {}
+			};
+
 			for path in &event.paths {
 				let watcher_span = tracing::info_span!("watcher");
 				// diff the paths to get a relative PathBuf
-				let path = diff_paths(path, &current_dir).context(Error::PathDiffFailed)?;
+				let path = diff_paths(path, &project_directory).context(Error::PathDiffFailed)?;
 				let is_package = path.parent().is_some_and(|parent| {
 					parent
 						.file_name()
@@ -410,17 +440,17 @@ pub async fn watch() -> Result<(), Error> {
 				async {
 					let update = if is_package && !path.is_dir() {
 						// this is a package file
-						info!("package update at {}", path.display());
+						info!("got package update at {}", path.display());
 						Some(Update::Module(path))
 					} else if !is_package && path.is_file() {
 						if path == Path::new(MAIN_SCRIPT_FILE) {
-							info!("main source update");
+							info!("got main source update");
 							Some(Update::MainSource)
 						} else if path == Path::new(DESCRIPTION_FILE) {
-							info!("description update");
+							info!("got description update");
 							Some(Update::Description)
 						} else if path == Path::new(SYNC_CONFIGURATION_FILE) {
-							info!("project configuration update");
+							info!("got project configuration update");
 							Some(Update::ProjectConfiguration)
 						} else {
 							None
@@ -442,6 +472,8 @@ pub async fn watch() -> Result<(), Error> {
 		if updates.len() > starting_len {
 			notify.notify_one();
 		}
+
+		drop(updates); // prevent deadlocks
 	}
 
 	Ok(())

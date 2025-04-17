@@ -13,35 +13,44 @@ use login::{
 	use_headful_chrome,
 };
 use project::{init, pull, push, read_configuration, watch};
-use std::path::PathBuf;
+use std::{ffi::OsStr, path::PathBuf};
 use tracing::warn;
 
 #[derive(Subcommand, Clone, Debug)]
-pub enum Command {
+enum Command {
 	/// Login to fumosclub (overwrites existing secrets)
 	Login {
-		/// Whether or not to spawn an instance of Chrome/Chromium in order to login to fumosclub.
+		/// Whether or not to spawn an instance of Chrome/Chromium in order to login to fumosclub
 		#[arg(short, long, default_value_t = false)]
 		spawn_chromium: bool,
 	},
 	/// Shows infomation about the logged in account
 	View,
 	/// Initializes a project in the specified directory
-	Init { project_directory: PathBuf },
+	Init {
+		#[arg(short, long)]
+		project_directory: PathBuf,
+	},
 	/// Lists all projects under the logged in account
 	List,
-	/// Pulls down a script via the fumosclub API (the script must be editable).
+	/// Pulls down a script via the fumosclub API (the script must be editable)
 	Pull {
 		script_id: String,
 		project_directory: PathBuf,
 	},
-	/// Pushes the script in current directory to fumosclub; data is sourced from [current_directory]/fumosync.json
-	Push,
-	/// Watches the current directory for changes, and pushes them to fumosclub
-	Watch,
+	/// Pushes the script in the specified directory to fumosclub; data is sourced from project_directory/fumosync.json
+	Push {
+		#[arg(short, long, default_value = OsStr::new("."))]
+		project_directory: PathBuf,
+	},
+	/// Watches the specified directory for changes, and pushes them to fumosclub
+	Watch {
+		#[arg(short, long, default_value = OsStr::new("."))]
+		project_directory: PathBuf,
+	},
 	/// Generates a key for a script under the logged in fumosclub account
 	Generate {
-		/// Id of the script; defaults to the script id in [current_directory]/fumosync.json
+		/// Id of the script; defaults to the script id in project_directory/fumosync.json
 		#[arg(long)]
 		id: Option<String>,
 	},
@@ -125,19 +134,19 @@ async fn main_fn() -> Result<(), Error> {
 			pull(script_id, project_directory).await?;
 		}
 
-		Command::Push => push().await?,
+		Command::Push { project_directory } => push(project_directory).await?,
 		Command::Generate { id } => {
 			let client = Client::new(get_session_secrets().await?);
 			let id = match id {
 				Some(id) => id,
-				None => read_configuration().await?.script_id,
+				None => read_configuration(".").await?.script_id,
 			};
 
 			println!("{}", client.generate_key(&id).await?);
 		}
 
-		Command::Watch => {
-			watch().await?;
+		Command::Watch { project_directory } => {
+			watch(project_directory).await?;
 		}
 	}
 
